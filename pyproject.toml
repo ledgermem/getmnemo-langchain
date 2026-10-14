@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "getmnemo-langchain"
-version = "0.1.0"
+version = "0.2.0"
 description = "LangChain adapter for Mnemo — drop-in BaseMemory and Retriever backed by the Mnemo SDK."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "Mnemo", email = "founders@getmnemo.xyz" }]
+authors = [{ name = "Mnemo", email = "founders@mnemohq.com" }]
 keywords = ["getmnemo", "langchain", "memory", "rag", "retriever", "llm"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -21,7 +21,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-  "getmnemo>=0.1",
+  "getmnemo>=0.2,<0.3",
   "langchain-core>=0.3,<1.0",
 ]
 
@@ -34,9 +34,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/getmnemo/getmnemo-langchain"
-Issues = "https://github.com/getmnemo/getmnemo-langchain/issues"
-Source = "https://github.com/getmnemo/getmnemo-langchain"
+Homepage = "https://github.com/ledgermem/getmnemo-langchain"
+Issues = "https://github.com/ledgermem/getmnemo-langchain/issues"
+Source = "https://github.com/ledgermem/getmnemo-langchain"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/langchain_getmnemo"]
