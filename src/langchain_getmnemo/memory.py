@@ -8,6 +8,11 @@ from getmnemo import Mnemo
 from langchain_core.memory import BaseMemory
 from pydantic import Field, PrivateAttr
 
+# POST /v1/search rejects limit > 50 with a 400.
+_MAX_SEARCH_LIMIT = 50
+# GET /v1/memories accepts limit <= 100 (openapi.json); clear() pages via nextCursor.
+_MAX_LIST_LIMIT = 100
+
 
 class MnemoMemory(BaseMemory):
     """Conversational memory backed by Mnemo.
@@ -66,7 +71,9 @@ class MnemoMemory(BaseMemory):
         # that namespace, otherwise memories from sibling threads sharing
         # the container leak into the prompt. Over-fetch so the post-filter
         # window still contains top_k matches.
-        fetch_limit = self.top_k * 4 if self.namespace else self.top_k
+        fetch_limit = (
+            min(self.top_k * 4, _MAX_SEARCH_LIMIT) if self.namespace else self.top_k
+        )
         hits = self._client.search(
             query, limit=fetch_limit, container_tag=self.container_tag
         )
@@ -108,7 +115,7 @@ class MnemoMemory(BaseMemory):
         cursor: str | None = None
         while True:
             page = self._client.list(
-                limit=100, cursor=cursor, container_tag=self.container_tag
+                limit=_MAX_LIST_LIMIT, cursor=cursor, container_tag=self.container_tag
             )
             for item in page.items:
                 meta = item.metadata or {}

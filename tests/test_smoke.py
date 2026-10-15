@@ -71,6 +71,13 @@ def test_memory_namespace_filters_hits() -> None:
     assert out["history"] == "user: mine"
 
 
+def test_memory_namespace_overfetch_capped_at_api_max() -> None:
+    client = _client()
+    memory = MnemoMemory(client=client, namespace="t1", top_k=20)
+    memory.load_memory_variables({"input": "hi"})
+    client.search.assert_called_once_with("hi", limit=50, container_tag=None)
+
+
 def test_memory_empty_results_yield_empty_history() -> None:
     # getmnemo 0.2 returns [] both for empty containers (404 swallowed) and
     # abstained queries — the adapter must not blow up on it.
