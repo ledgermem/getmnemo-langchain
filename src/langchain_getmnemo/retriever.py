@@ -4,17 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from getmnemo import Mnemo
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
-from getmnemo import Mnemo
 from pydantic import Field, PrivateAttr
 
 
 class MnemoRetriever(BaseRetriever):
-    """LangChain ``BaseRetriever`` that delegates to ``Mnemo.search``."""
+    """LangChain ``BaseRetriever`` that delegates to ``Mnemo.search``.
 
-    top_k: int = Field(default=5, ge=1, le=100)
+    The search is scoped to ``container_tag`` when set, otherwise to the
+    client's ``default_container_tag``.
+    """
+
+    top_k: int = Field(default=5, ge=1, le=50)
+    container_tag: str | None = None
 
     _client: Mnemo = PrivateAttr()
 
@@ -28,17 +33,16 @@ class MnemoRetriever(BaseRetriever):
         *,
         run_manager: CallbackManagerForRetrieverRun,
     ) -> list[Document]:
-        response = self._client.search(query, limit=self.top_k)
-        hits = getattr(response, "hits", []) or []
+        hits = self._client.search(
+            query, limit=self.top_k, container_tag=self.container_tag
+        )
         documents: list[Document] = []
         for hit in hits:
-            content = getattr(hit, "content", None) or getattr(hit, "text", "")
-            metadata = dict(getattr(hit, "metadata", {}) or {})
-            score = getattr(hit, "score", None)
-            if score is not None:
-                metadata["score"] = score
-            memory_id = getattr(hit, "id", None)
-            if memory_id is not None:
-                metadata["memory_id"] = memory_id
-            documents.append(Document(page_content=content, metadata=metadata))
+            metadata = dict(hit.metadata or {})
+            metadata["score"] = hit.score
+            if hit.memory_id is not None:
+                metadata["memory_id"] = hit.memory_id
+            if hit.document_id is not None:
+                metadata["document_id"] = hit.document_id
+            documents.append(Document(page_content=hit.content, metadata=metadata))
         return documents

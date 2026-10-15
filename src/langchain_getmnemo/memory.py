@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
-from langchain_core.memory import BaseMemory
 from getmnemo import Mnemo
+from langchain_core.memory import BaseMemory
 from pydantic import Field, PrivateAttr
+
+# POST /v1/search rejects limit > 50 with a 400.
+_MAX_SEARCH_LIMIT = 50
+# GET /v1/memories accepts limit <= 100 (openapi.json); clear() pages via nextCursor.
+_MAX_LIST_LIMIT = 100
 
 
 class MnemoMemory(BaseMemory):
@@ -15,13 +20,19 @@ class MnemoMemory(BaseMemory):
     On every turn, ``save_context`` writes the user/AI exchange into Mnemo,
     and ``load_memory_variables`` retrieves the top-K relevant prior turns by
     semantic search.
+
+    All calls are scoped to ``container_tag`` when set, otherwise to the
+    client's ``default_container_tag``. Use one container per conversation
+    thread or user (e.g. ``"user:jane"``); ``namespace`` additionally
+    partitions threads that share one container.
     """
 
     memory_key: str = "history"
     input_key: str = "input"
     output_key: str = "output"
     top_k: int = Field(default=5, ge=1, le=50)
-    namespace: Optional[str] = None
+    container_tag: str | None = None
+    namespace: str | None = None
 
     _client: Mnemo = PrivateAttr()
 
@@ -57,20 +68,22 @@ class MnemoMemory(BaseMemory):
         if not query:
             return {self.memory_key: ""}
         # When a namespace is configured we must filter retrieved hits to
-        # that namespace, otherwise memories from sibling threads/users
-        # leak into the prompt. Over-fetch so the post-filter window still
-        # contains top_k matches.
-        fetch_limit = self.top_k * 4 if self.namespace else self.top_k
-        response = self._client.search(query, limit=fetch_limit)
-        hits = getattr(response, "hits", []) or []
+        # that namespace, otherwise memories from sibling threads sharing
+        # the container leak into the prompt. Over-fetch so the post-filter
+        # window still contains top_k matches.
+        fetch_limit = (
+            min(self.top_k * 4, _MAX_SEARCH_LIMIT) if self.namespace else self.top_k
+        )
+        hits = self._client.search(
+            query, limit=fetch_limit, container_tag=self.container_tag
+        )
         lines: list[str] = []
         for hit in hits:
-            metadata = getattr(hit, "metadata", {}) or {}
+            metadata = hit.metadata or {}
             if self.namespace and metadata.get("namespace") != self.namespace:
                 continue
-            content = getattr(hit, "content", None) or getattr(hit, "text", "")
             role = metadata.get("role", "memory")
-            lines.append(f"{role}: {content}")
+            lines.append(f"{role}: {hit.content}")
             if len(lines) >= self.top_k:
                 break
         return {self.memory_key: "\n".join(lines)}
@@ -79,31 +92,38 @@ class MnemoMemory(BaseMemory):
         user_text = inputs.get(self.input_key)
         ai_text = outputs.get(self.output_key)
         if user_text:
-            self._client.add(str(user_text), metadata=self._format_metadata("user"))
+            self._client.add(
+                str(user_text),
+                metadata=self._format_metadata("user"),
+                container_tag=self.container_tag,
+            )
         if ai_text:
-            self._client.add(str(ai_text), metadata=self._format_metadata("assistant"))
+            self._client.add(
+                str(ai_text),
+                metadata=self._format_metadata("assistant"),
+                container_tag=self.container_tag,
+            )
 
     def clear(self) -> None:
-        # Mnemo does not expose a workspace-wide wipe in the SDK; iterate
+        # Mnemo does not expose a container-wide wipe in the SDK; iterate
         # and delete. Snapshot ids first — deleting while paginating mutates
         # the underlying collection and either skips rows or loops forever
         # depending on whether the backend uses offset or keyset cursors.
         # Honour the configured namespace so clear() doesn't nuke other
-        # threads sharing the same workspace.
+        # threads sharing the same container.
         ids: list[str] = []
-        cursor: Optional[str] = None
+        cursor: str | None = None
         while True:
-            page = self._client.list(limit=100, cursor=cursor)
-            items = getattr(page, "items", []) or getattr(page, "memories", []) or []
-            for item in items:
-                meta = getattr(item, "metadata", {}) or {}
+            page = self._client.list(
+                limit=_MAX_LIST_LIMIT, cursor=cursor, container_tag=self.container_tag
+            )
+            for item in page.items:
+                meta = item.metadata or {}
                 if self.namespace and meta.get("namespace") != self.namespace:
                     continue
-                memory_id = getattr(item, "id", None)
-                if memory_id is not None:
-                    ids.append(memory_id)
-            cursor = getattr(page, "next_cursor", None)
+                ids.append(item.id)
+            cursor = page.next_cursor
             if not cursor:
                 break
         for memory_id in ids:
-            self._client.delete(memory_id)
+            self._client.delete(memory_id, container_tag=self.container_tag)
